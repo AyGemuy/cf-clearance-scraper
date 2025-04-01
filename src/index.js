@@ -64,7 +64,7 @@ try {
 
     res.status(result.code ?? 500).send(result);
 } catch(e) {
- console.error(e):
+ console.error(e);
     res.send("Error");
 }
 })
