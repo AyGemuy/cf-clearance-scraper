@@ -1,35 +1,44 @@
+//const puppeteer = require("puppeteer-core");
 const { connect } = require("puppeteer-real-browser")
-async function createBrowser() {
-    try {
-        if (global.finished == true) return
 
-        global.browser = null
+async function createBrowser(retry = 0) {
+  try {
+    if (global.finished || global.browser) return;
 
-        // console.log('Launching the browser...');
+    console.log("Launching browser...");
+    
+    /*const browser = await puppeteer.launch({
+      headless: false,
+      args: ["--no-sandbox", "--disable-gpu"],
+    });*/
 
-        const { browser } = await connect({
-            headless: false,
-            turnstile: true,
-            connectOption: { defaultViewport: null },
-            disableXvfb: false,
-        })
 
-        // console.log('Browser launched');
+    const { browser } = await connect({
+      headless: false,
+      turnstile: true,
+      connectOption: { defaultViewport: null },
+      disableXvfb: false,
+    })
 
-        global.browser = browser;
+    global.browser = browser;
 
-        browser.on('disconnected', async () => {
-            if (global.finished == true) return
-            console.log('Browser disconnected');
-            await new Promise(resolve => setTimeout(resolve, 3000));
-            await createBrowser();
-        })
+    browser.on("disconnected", async () => {
+      if (global.finished) return;
+      console.log("Browser disconnected. Restarting...");
+      global.browser = null;
+      await createBrowser();
+    });
 
-    } catch (e) {
-        console.log(e.message);
-        if (global.finished == true) return
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        await createBrowser();
-    }
+    console.log("Browser launched successfully.");
+
+  } catch (e) {
+    console.error("Error launching browser:", e.stack);
+    
+    if (global.finished || retry >= 5) return; // Maksimal 5 kali retry
+    console.log(`Retrying (${retry + 1}/5)...`);
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await createBrowser(retry + 1);
+  }
 }
-createBrowser()
+
+createBrowser();
