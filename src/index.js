@@ -28,7 +28,7 @@ const wafSession = require('./endpoints/wafSession')
 
 
 app.post('/cf-clearance-scraper', async (req, res) => {
-
+try {
     const data = req.body
 
     const check = reqValidate(data)
@@ -62,7 +62,11 @@ app.post('/cf-clearance-scraper', async (req, res) => {
 
     global.browserLength--
 
-    res.status(result.code ?? 500).send(result)
+    res.status(result.code ?? 500).send(result);
+} catch(e) {
+ console.error(e):
+    res.send("Error");
+}
 })
 
 app.use((req, res) => { res.status(404).json({ code: 404, message: 'Not Found' }) })
