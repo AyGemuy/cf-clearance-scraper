@@ -1,24 +1,25 @@
 // Mengimpor modul yang diperlukan
 const { connect } = require("puppeteer-real-browser");
+const puppeteer = require("puppeteer");
 
 /**
  * Fungsi untuk membuat dan mengelola instance browser Puppeteer.
- * Fungsi ini menangani peluncuran browser, penanganan koneksi terputus,
- * dan mekanisme percobaan ulang.
+ * Menggunakan fallback dari puppeteer-real-browser ke puppeteer biasa.
  *
  * @param {number} retry - Jumlah percobaan ulang saat meluncurkan browser.
+ * @param {boolean} useStandardPuppeteer - Gunakan puppeteer standar sebagai fallback.
  */
-async function createBrowser(retry = 0) {
+async function createBrowser(retry = 0, useStandardPuppeteer = false) {
     try {
         // Mencegah peluncuran browser jika proses sudah selesai atau browser sudah ada
         if (global.finished || global.browser) {
             return;
         }
 
-        console.log("Launching browser...");
+        console.log(`Launching browser${useStandardPuppeteer ? ' (using standard puppeteer)' : ''}...`);
 
         // Tunggu sebentar untuk memastikan Xvfb sudah siap
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise(resolve => setTimeout(resolve, 3000));
 
         // Konfigurasi argumen browser yang dioptimalkan untuk Docker
         const browserArgs = [
@@ -39,8 +40,22 @@ async function createBrowser(retry = 0) {
             '--no-default-browser-check',
             '--disable-gpu',
             '--display=:99',
-            '--remote-debugging-port=9222',
-            '--remote-debugging-address=0.0.0.0'
+            '--disable-software-rasterizer',
+            '--disable-background-networking',
+            '--disable-background-media-suspend',
+            '--disable-client-side-phishing-detection',
+            '--disable-sync',
+            '--disable-translate',
+            '--hide-scrollbars',
+            '--metrics-recording-only',
+            '--mute-audio',
+            '--no-default-browser-check',
+            '--no-pings',
+            '--password-store=basic',
+            '--use-mock-keychain',
+            '--disable-component-extensions-with-background-pages',
+            '--disable-default-apps',
+            '--disable-extensions'
         ];
 
         // Menambahkan argumen dari environment variable jika ada
@@ -49,59 +64,92 @@ async function createBrowser(retry = 0) {
             browserArgs.push(...envArgs);
         }
 
-        // Menggunakan puppeteer-real-browser untuk koneksi ke browser
-        const { browser } = await connect({
-            headless: 'new', // Penting: Memaksa mode headless baru untuk lingkungan Docker
-            // Mengambil jalur executable dari variabel lingkungan yang diatur di Dockerfile
-            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
-            // Menggunakan argumen yang sudah dioptimalkan
-            args: browserArgs,
-            connectOption: { 
+        let browser;
+
+        if (useStandardPuppeteer) {
+            // Menggunakan puppeteer standar sebagai fallback
+            browser = await puppeteer.launch({
+                headless: 'new',
+                executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+                args: browserArgs,
+                ignoreDefaultArgs: ["--enable-automation"],
                 defaultViewport: null,
-                // Menambahkan timeout yang lebih lama untuk koneksi
-                timeout: 30000
-            },
-            // Mengaktifkan disableXvfb untuk menghindari konflik dengan Xvfb yang sudah berjalan
-            disableXvfb: true,
-            // Menambahkan argumen untuk menghindari deteksi otomatis
-            ignoreDefaultArgs: ["--enable-automation"],
-            // Menambahkan opsi untuk debugging jika diperlukan
-            dumpio: process.env.NODE_ENV === 'development'
-        }).catch(e => {
-            // Menangkap kesalahan koneksi browser dan mencatatnya
-            console.error("Error launching browser:", e.message);
-            console.error("Full error:", e);
-            return { browser: null }; // Mengembalikan null browser untuk penanganan kesalahan lebih lanjut
-        });
+                timeout: 60000,
+                handleSIGINT: false,
+                handleSIGTERM: false,
+                handleSIGHUP: false,
+                dumpio: process.env.NODE_ENV === 'development'
+            });
+        } else {
+            // Menggunakan puppeteer-real-browser
+            const result = await connect({
+                headless: 'new',
+                executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+                args: browserArgs,
+                connectOption: { 
+                    defaultViewport: null,
+                    timeout: 60000
+                },
+                disableXvfb: true,
+                ignoreDefaultArgs: ["--enable-automation"],
+                dumpio: process.env.NODE_ENV === 'development',
+                userDataDir: '/tmp/puppeteer_dev_profile',
+                slowMo: process.env.NODE_ENV === 'development' ? 100 : 0
+            }).catch(e => {
+                console.error("Error launching browser with puppeteer-real-browser:", e.message);
+                return { browser: null };
+            });
+
+            browser = result ? result.browser : null;
+        }
 
         // Memeriksa apakah koneksi browser berhasil
         if (!browser) {
             console.error("Failed to connect to browser");
+            
+            // Jika menggunakan puppeteer-real-browser dan gagal, coba dengan puppeteer standar
+            if (!useStandardPuppeteer && retry < 3) {
+                console.log("Trying with standard puppeteer...");
+                await new Promise((resolve) => setTimeout(resolve, 2000));
+                return await createBrowser(retry + 1, true);
+            }
+            
             // Jika percobaan ulang melebihi batas, hentikan
             if (retry >= 5) {
                 console.log("Max retries reached. Stopping browser launch attempts.");
                 return;
             }
+            
             // Mencoba lagi setelah jeda yang lebih lama
             console.log(`Retrying (${retry + 1}/5)...`);
             await new Promise((resolve) => setTimeout(resolve, 5000));
-            await createBrowser(retry + 1);
+            await createBrowser(retry + 1, useStandardPuppeteer);
             return;
         }
 
         // Test koneksi browser dengan membuat halaman sederhana
         try {
             const testPage = await browser.newPage();
-            await testPage.goto('about:blank');
+            await testPage.goto('about:blank', { waitUntil: 'networkidle0', timeout: 30000 });
             await testPage.close();
             console.log("Browser connection test successful.");
         } catch (testError) {
             console.error("Browser connection test failed:", testError.message);
+            
+            // Jika test gagal, coba dengan puppeteer standar
+            if (!useStandardPuppeteer && retry < 3) {
+                console.log("Browser test failed, trying with standard puppeteer...");
+                await browser.close().catch(() => {});
+                await new Promise((resolve) => setTimeout(resolve, 2000));
+                return await createBrowser(retry + 1, true);
+            }
+            
             throw testError;
         }
 
         // Menyimpan instance browser global
         global.browser = browser;
+        global.useStandardPuppeteer = useStandardPuppeteer;
 
         // Menangani peristiwa pemutusan koneksi browser
         browser.on("disconnected", async () => {
@@ -110,10 +158,10 @@ async function createBrowser(retry = 0) {
                 return;
             }
             console.log("Browser disconnected. Restarting...");
-            global.browser = null; // Menyetel browser ke null agar instance baru dibuat
+            global.browser = null;
             // Tunggu sebentar sebelum restart
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            await createBrowser(); // Mencoba meluncurkan ulang browser
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            await createBrowser(0, global.useStandardPuppeteer);
         });
 
         // Menangani error pada browser
@@ -121,21 +169,28 @@ async function createBrowser(retry = 0) {
             console.error("Browser error:", error.message);
         });
 
-        console.log("Browser launched successfully.");
+        console.log(`Browser launched successfully${useStandardPuppeteer ? ' (using standard puppeteer)' : ' (using puppeteer-real-browser)'}.`);
 
     } catch (e) {
-        // Menangkap kesalahan umum selama pembuatan browser
         console.error("Error launching browser:", e.stack);
+
+        // Jika menggunakan puppeteer-real-browser dan gagal, coba dengan puppeteer standar
+        if (!useStandardPuppeteer && retry < 3) {
+            console.log("Switching to standard puppeteer due to error...");
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            return await createBrowser(retry + 1, true);
+        }
 
         // Jika proses sudah selesai atau percobaan ulang melebihi batas, hentikan
         if (global.finished || retry >= 5) {
             console.log("Max retries reached. Stopping browser launch attempts.");
             return;
         }
+        
         // Mencoba lagi setelah jeda yang lebih lama
         console.log(`Retrying (${retry + 1}/5)...`);
         await new Promise((resolve) => setTimeout(resolve, 5000));
-        await createBrowser(retry + 1);
+        await createBrowser(retry + 1, useStandardPuppeteer);
     }
 }
 
@@ -145,8 +200,9 @@ async function waitForXvfb() {
     
     return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
-            reject(new Error('Timeout waiting for Xvfb'));
-        }, 30000);
+            console.log('Xvfb check timeout, continuing anyway...');
+            resolve(); // Resolve instead of reject untuk continue
+        }, 15000);
 
         const checkDisplay = () => {
             const xdpyinfo = spawn('xdpyinfo', ['-display', ':99']);
@@ -173,7 +229,7 @@ async function waitForXvfb() {
 // Fungsi untuk cleanup yang lebih robust
 async function cleanup() {
     console.log('Cleaning up browser resources...');
-    global.finished = true; // Menandai bahwa proses akan selesai
+    global.finished = true;
 
     if (global.browser) {
         try {
@@ -198,43 +254,42 @@ async function cleanup() {
     }
 }
 
-// Menangani sinyal SIGINT (misalnya, Ctrl+C) untuk membersihkan browser
+// Menangani berbagai sinyal untuk cleanup
 process.on('SIGINT', async () => {
     console.log('Received SIGINT, cleaning up...');
     await cleanup();
-    process.exit(0); // Keluar dari proses
+    process.exit(0);
 });
 
-// Menangani sinyal SIGTERM untuk pembersihan yang graceful
 process.on('SIGTERM', async () => {
     console.log('Received SIGTERM, cleaning up...');
     await cleanup();
     process.exit(0);
 });
 
-// Menangani uncaught exception
 process.on('uncaughtException', async (error) => {
     console.error('Uncaught Exception:', error);
     await cleanup();
     process.exit(1);
 });
 
-// Menangani unhandled promise rejection
 process.on('unhandledRejection', async (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
     await cleanup();
     process.exit(1);
 });
 
-// Meluncurkan browser secara otomatis saat skrip dimulai, kecuali diabaikan oleh variabel lingkungan
+// Meluncurkan browser secara otomatis saat skrip dimulai
 if (process.env.SKIP_LAUNCH !== 'true') {
-    // Tunggu Xvfb siap sebelum meluncurkan browser
     waitForXvfb()
-        .then(() => createBrowser())
+        .then(() => {
+            // Coba dengan puppeteer-real-browser dulu, fallback ke puppeteer standar
+            createBrowser(0, false);
+        })
         .catch((error) => {
             console.error('Failed to wait for Xvfb:', error.message);
             // Tetap coba launch browser meskipun Xvfb check gagal
-            createBrowser();
+            createBrowser(0, false);
         });
 }
 
