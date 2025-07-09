@@ -23,39 +23,9 @@ async function createBrowser(retry = 0, useStandardPuppeteer = false) {
 
         // Konfigurasi argumen browser yang dioptimalkan untuk Docker
         const browserArgs = [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-background-timer-throttling',
-            '--disable-backgrounding-occluded-windows',
-            '--disable-renderer-backgrounding',
-            '--disable-features=TranslateUI',
-            '--disable-blink-features=AutomationControlled',
-            '--disable-extensions',
-            '--disable-plugins',
-            '--disable-default-apps',
-            '--disable-web-security',
-            '--disable-features=VizDisplayCompositor',
-            '--no-first-run',
-            '--no-default-browser-check',
-            '--disable-gpu',
+            
             '--display=:99',
-            '--disable-software-rasterizer',
-            '--disable-background-networking',
-            '--disable-background-media-suspend',
-            '--disable-client-side-phishing-detection',
-            '--disable-sync',
-            '--disable-translate',
-            '--hide-scrollbars',
-            '--metrics-recording-only',
-            '--mute-audio',
-            '--no-default-browser-check',
-            '--no-pings',
-            '--password-store=basic',
-            '--use-mock-keychain',
-            '--disable-component-extensions-with-background-pages',
-            '--disable-default-apps',
-            '--disable-extensions'
+            
         ];
 
         // Menambahkan argumen dari environment variable jika ada
@@ -69,7 +39,7 @@ async function createBrowser(retry = 0, useStandardPuppeteer = false) {
         if (useStandardPuppeteer) {
             // Menggunakan puppeteer standar sebagai fallback
             browser = await puppeteer.launch({
-                headless: 'new',
+                headless: 'auto',
                 executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
                 args: browserArgs,
                 ignoreDefaultArgs: ["--enable-automation"],
@@ -83,7 +53,7 @@ async function createBrowser(retry = 0, useStandardPuppeteer = false) {
         } else {
             // Menggunakan puppeteer-real-browser
             const result = await connect({
-                headless: 'new',
+                headless: 'auto',
                 executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
                 args: browserArgs,
                 connectOption: { 
