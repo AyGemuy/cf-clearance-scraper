@@ -14,10 +14,12 @@ async function createBrowser(retry = 0) {
 
 
     const { browser } = await connect({
-      headless: false,
-      turnstile: true,
+      headless: 'auto',
+    args: ['--no-first-run'],
+    fingerprint: true,
+    turnstile: true,
       connectOption: { defaultViewport: null },
-      disableXvfb: false,
+      disableXvfb: true,
     })
 
     global.browser = browser;
